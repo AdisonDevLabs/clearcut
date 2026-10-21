@@ -124,9 +124,26 @@ export async function removeImageBackground(
             });
           }
         } else if (event.type === 'complete') {
-          // Convert base64 dataUrl to Blob
-          const fetchRes = await fetch(event.dataUrl);
-          const outputBlob = await fetchRes.blob();
+          let outputBlob: Blob;
+          if (event.resultId) {
+            const res = await fetch(`/api/remove-background?id=${event.resultId}`, { signal });
+            if (!res.ok) {
+              if (event.dataUrl) {
+                const fb = await fetch(event.dataUrl);
+                outputBlob = await fb.blob();
+              } else {
+                throw new Error('Failed to retrieve processed image from server');
+              }
+            } else {
+              outputBlob = await res.blob();
+            }
+          } else if (event.dataUrl) {
+            const fetchRes = await fetch(event.dataUrl);
+            outputBlob = await fetchRes.blob();
+          } else {
+            throw new Error('No output image provided by server');
+          }
+
           const outputUrl = URL.createObjectURL(outputBlob);
 
           finalResult = {

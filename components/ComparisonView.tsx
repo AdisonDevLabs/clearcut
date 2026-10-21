@@ -172,17 +172,30 @@ export function ComparisonView({
     }
   };
 
+  // Directly download the original pure transparent PNG result without altering anything
+  const handleDownloadTransparentPng = () => {
+    try {
+      const url = URL.createObjectURL(result.outputBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      const base = originalFilename.replace(/\.[^/.]+$/, '') || 'image';
+      link.download = `${base}-transparent.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error('Download transparent PNG failed', err);
+    }
+  };
+
   // Download logic (handles transparent PNG, or renders backdrop onto canvas)
   const handleDownload = async (format: 'png' | 'webp' = 'png') => {
     setIsExporting(true);
     try {
       // If transparent backdrop and PNG, download directly
       if (selectedBackdrop.type === 'transparent' && format === 'png') {
-        const link = document.createElement('a');
-        link.href = result.outputUrl;
-        const base = originalFilename.replace(/\.[^/.]+$/, '');
-        link.download = `${base}-clearcut.png`;
-        link.click();
+        handleDownloadTransparentPng();
         setIsExporting(false);
         return;
       }
@@ -644,7 +657,7 @@ export function ComparisonView({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2.5 shrink-0 w-full sm:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0 w-full sm:w-auto justify-end">
           <button
             onClick={handleCopyToClipboard}
             className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 shadow-xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition-colors whitespace-nowrap"
@@ -662,13 +675,23 @@ export function ComparisonView({
             Download WebP
           </button>
 
+          {selectedBackdrop.type !== 'transparent' && (
+            <button
+              onClick={() => handleDownload('png')}
+              disabled={isExporting}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 shadow-xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition-colors whitespace-nowrap"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download with {selectedBackdrop.label}
+            </button>
+          )}
+
           <button
-            onClick={() => handleDownload('png')}
-            disabled={isExporting}
+            onClick={handleDownloadTransparentPng}
             className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors whitespace-nowrap"
           >
             <Download className="h-3.5 w-3.5" />
-            {selectedBackdrop.type === 'transparent' ? 'Download Transparent PNG' : `Download with ${selectedBackdrop.label}`}
+            Download Transparent PNG
           </button>
         </div>
       </div>

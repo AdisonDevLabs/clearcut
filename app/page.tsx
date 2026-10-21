@@ -28,9 +28,17 @@ export default function Home() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | undefined>(undefined);
 
   const fileInputHiddenRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const processImage = useCallback(
     async (file: File | Blob, filename: string, model: RemovalModel) => {
+      // Abort any previous ongoing request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
       setIsProcessing(true);
       setErrorMessage(null);
       setResult(null);
@@ -50,8 +58,11 @@ export default function Home() {
       try {
         const removalResult = await removeImageBackground(file, {
           model,
+          signal: abortController.signal,
           onProgress: (p) => setProgress(p),
         });
+
+        if (abortController.signal.aborted) return;
 
         setResult(removalResult);
         setIsProcessing(false);
@@ -70,12 +81,16 @@ export default function Home() {
           ...prev.slice(0, 7), // Keep last 8 items
         ]);
       } catch (err: unknown) {
+        if (abortController.signal.aborted) {
+          // Aborted by user, do not show error
+          return;
+        }
         console.error('Background removal failed', err);
         setIsProcessing(false);
         const msg =
           err instanceof Error
             ? err.message
-            : 'An unexpected error occurred while processing the image in your browser.';
+            : 'An unexpected error occurred while processing the image.';
         setErrorMessage(msg);
       }
     },
@@ -87,6 +102,9 @@ export default function Home() {
   };
 
   const handleReset = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     setResult(null);
     setOriginalUrl(null);
     setOriginalFilename('');
@@ -177,6 +195,9 @@ export default function Home() {
                 progress={progress}
                 filename={originalFilename}
                 onCancel={() => {
+                  if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                  }
                   setIsProcessing(false);
                   setProgress(null);
                 }}
