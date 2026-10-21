@@ -245,14 +245,12 @@ export async function POST(req: NextRequest) {
             timestamp: Date.now(),
           });
 
-          // Also provide dataUrl for small images (< 1.5MB)
-          let dataUrl: string | undefined = undefined;
-          if (resultBuffer.byteLength < 1.5 * 1024 * 1024) {
-            dataUrl = `data:image/png;base64,${resultBuffer.toString('base64')}`;
-          }
+          const base64Data = resultBuffer.toString('base64');
+          const dataUrl = `data:image/png;base64,${base64Data}`;
 
           sendEvent({
             type: 'complete',
+            base64: base64Data,
             resultId,
             dataUrl,
             width,

@@ -29,6 +29,18 @@ export interface ProcessImageResult {
 }
 
 /**
+ * Converts a base64 encoded string to a Blob instantly without network calls.
+ */
+function base64ToBlob(base64: string, mimeType = 'image/png'): Blob {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+/**
  * Removes background using the server-side @imgly/background-removal-node engine,
  * streaming live real-time progress callbacks back to the client.
  */
@@ -93,86 +105,95 @@ export async function removeImageBackground(
   let finalResult: ProcessImageResult | null = null;
   let serverErrorMessage: string | null = null;
 
+  const handleEvent = async (event: Record<string, unknown>) => {
+    if (event.type === 'progress') {
+      if (onProgress) {
+        onProgress({
+          stage: event.stage as RemovalProgress['stage'],
+          rawKey: (event.rawKey as string) || 'progress',
+          label: (event.label as string) || 'Processing image...',
+          percent: event.percent as number,
+          currentBytes: (event.currentBytes as number) || 0,
+          totalBytes: (event.totalBytes as number) || 0,
+          elapsedSeconds: (event.elapsedSeconds as number) || Math.round((performance.now() - startTime) / 100) / 10,
+        });
+      }
+    } else if (event.type === 'complete') {
+      let outputBlob: Blob;
+
+      if (typeof event.base64 === 'string') {
+        outputBlob = base64ToBlob(event.base64, 'image/png');
+      } else if (typeof event.dataUrl === 'string') {
+        const b64 = event.dataUrl.includes(',') ? event.dataUrl.split(',')[1] : event.dataUrl;
+        outputBlob = base64ToBlob(b64, 'image/png');
+      } else if (typeof event.resultId === 'string') {
+        const res = await fetch(`/api/remove-background?id=${event.resultId}`, { signal });
+        if (!res.ok) throw new Error('Failed to retrieve processed image from server');
+        outputBlob = await res.blob();
+      } else {
+        throw new Error('Server returned empty image result');
+      }
+
+      const outputUrl = URL.createObjectURL(outputBlob);
+
+      finalResult = {
+        outputBlob,
+        outputUrl,
+        durationMs: (event.durationMs as number) || 0,
+        originalSize: (event.originalSize as number) || 0,
+        outputSize: (event.outputSize as number) || outputBlob.size,
+        width: (event.width as number) || 800,
+        height: (event.height as number) || 600,
+      };
+
+      if (onProgress) {
+        onProgress({
+          stage: 'complete',
+          rawKey: 'done',
+          label: 'Background removal completed',
+          percent: 100,
+          currentBytes: finalResult.outputSize,
+          totalBytes: finalResult.outputSize,
+          elapsedSeconds: Math.round(finalResult.durationMs / 100) / 10,
+        });
+      }
+    } else if (event.type === 'error') {
+      serverErrorMessage = (event.message as string) || 'Background removal encountered an error';
+    }
+  };
+
+  const processLine = async (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) return;
+    const jsonStr = trimmed.slice(5).trim();
+    if (!jsonStr) return;
+
+    try {
+      const event = JSON.parse(jsonStr);
+      await handleEvent(event);
+    } catch (parseErr) {
+      console.warn('Failed to parse SSE JSON line:', trimmed, parseErr);
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete trailing fragment
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-
-      const jsonStr = trimmed.slice(5).trim();
-      if (!jsonStr) continue;
-
-      try {
-        const event = JSON.parse(jsonStr);
-
-        if (event.type === 'progress') {
-          if (onProgress) {
-            onProgress({
-              stage: event.stage,
-              rawKey: event.rawKey || 'progress',
-              label: event.label || 'Processing image...',
-              percent: event.percent,
-              currentBytes: event.currentBytes || 0,
-              totalBytes: event.totalBytes || 0,
-              elapsedSeconds: event.elapsedSeconds || Math.round((performance.now() - startTime) / 100) / 10,
-            });
-          }
-        } else if (event.type === 'complete') {
-          let outputBlob: Blob;
-          if (event.resultId) {
-            const res = await fetch(`/api/remove-background?id=${event.resultId}`, { signal });
-            if (!res.ok) {
-              if (event.dataUrl) {
-                const fb = await fetch(event.dataUrl);
-                outputBlob = await fb.blob();
-              } else {
-                throw new Error('Failed to retrieve processed image from server');
-              }
-            } else {
-              outputBlob = await res.blob();
-            }
-          } else if (event.dataUrl) {
-            const fetchRes = await fetch(event.dataUrl);
-            outputBlob = await fetchRes.blob();
-          } else {
-            throw new Error('No output image provided by server');
-          }
-
-          const outputUrl = URL.createObjectURL(outputBlob);
-
-          finalResult = {
-            outputBlob,
-            outputUrl,
-            durationMs: event.durationMs,
-            originalSize: event.originalSize,
-            outputSize: event.outputSize,
-            width: event.width,
-            height: event.height,
-          };
-
-          if (onProgress) {
-            onProgress({
-              stage: 'complete',
-              rawKey: 'done',
-              label: 'Background removal completed',
-              percent: 100,
-              currentBytes: event.outputSize,
-              totalBytes: event.outputSize,
-              elapsedSeconds: Math.round(event.durationMs / 100) / 10,
-            });
-          }
-        } else if (event.type === 'error') {
-          serverErrorMessage = event.message || 'Background removal encountered an error';
-        }
-      } catch (parseErr) {
-        console.warn('Failed to parse SSE line', trimmed, parseErr);
+      for (const line of lines) {
+        await processLine(line);
       }
+    }
+
+    if (done) {
+      if (buffer.trim()) {
+        await processLine(buffer.trim());
+      }
+      break;
     }
   }
 
