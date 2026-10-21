@@ -1,0 +1,6 @@
+{
+  "name": "ClearCut - In-Browser AI Background Remover",
+  "description": "Instantly remove image backgrounds entirely in your browser using client-side AI with drag-and-drop, side-by-side comparison, and live progress tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
